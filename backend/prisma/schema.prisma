@@ -1,0 +1,419 @@
+// This is your Prisma schema file
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User Model - Wallet-based identity
+model User {
+  id            String   @id @default(uuid())
+  walletAddress String   @unique
+  username      String?
+  profileImage  String?
+  nonce         String   @default(uuid())
+  
+  // Stats
+  totalWins     Int      @default(0)
+  totalLosses   Int      @default(0)
+  arenaPoints   Int      @default(0)
+  rank          Int      @default(0)
+  
+  // Relationships
+  agents        Agent[]
+  battles       BattleParticipant[]
+  tournaments   TournamentParticipant[]
+  royales       RoyaleParticipant[]
+  achievements  UserAchievement[]
+  battleHistory BattleHistory[]
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  lastLoginAt   DateTime @default(now())
+
+  @@index([walletAddress])
+  @@index([arenaPoints])
+  @@map("users")
+}
+
+// Agent Model - AI Fighter
+model Agent {
+  id              String   @id @default(uuid())
+  name            String
+  class           String   // Warrior, Striker, Defender, Assassin, Mage, Tank
+  personality     String
+  combatStyle     String   // Aggressive, Defensive, Balanced, Tactical, Berserker, Strategic
+  
+  // Stats (0-100)
+  strength        Int      @default(70)
+  defense         Int      @default(70)
+  speed           Int      @default(70)
+  intelligence    Int      @default(70)
+  
+  // Abilities
+  specialAbility  String
+  abilities       String[] @default([])
+  weaknesses      String[] @default([])
+  
+  // Visual
+  avatar          String
+  avatarUrl       String?
+  
+  // Battle Stats
+  wins            Int      @default(0)
+  losses          Int      @default(0)
+  points          Int      @default(0)
+  killStreak      Int      @default(0)
+  highestStreak   Int      @default(0)
+  
+  // Owner
+  ownerId         String
+  owner           User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  
+  // Storage
+  storageHash     String?  // 0G storage hash
+  
+  // Relationships
+  battles         BattleParticipant[]
+  tournamentParticipations TournamentParticipant[]
+  royaleParticipations RoyaleParticipant[]
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([ownerId])
+  @@index([points])
+  @@map("agents")
+}
+
+// Battle Model
+model Battle {
+  id              String   @id @default(uuid())
+  type            String   // single, tournament, royale
+  status          String   @default("waiting") // waiting, in-progress, completed
+  
+  // Participants
+  participants    BattleParticipant[]
+  
+  // Battle Data
+  rounds          Int      @default(0)
+  maxRounds       Int      @default(100)
+  logs           BattleLog[]
+  
+  // Result
+  winnerId        String?
+  winner          BattleParticipant? @relation("BattleWinner", fields: [winnerId], references: [id])
+  
+  // Timing
+  startedAt       DateTime?
+  endedAt         DateTime?
+  duration        Int?     // in seconds
+  
+  // Storage
+  storageHash     String?  // 0G storage hash
+  
+  // Tournament/Royale reference
+  tournamentId    String?
+  royaleId        String?
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([status])
+  @@index([type])
+  @@map("battles")
+}
+
+// Battle Participant
+model BattleParticipant {
+  id              String   @id @default(uuid())
+  battleId        String
+  battle          Battle   @relation(fields: [battleId], references: [id], onDelete: Cascade)
+  
+  agentId         String
+  agent           Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Battle State
+  health          Int      @default(100)
+  maxHealth       Int      @default(100)
+  status          String   @default("alive") // alive, eliminated
+  
+  // Stats during battle
+  damageDealt     Int      @default(0)
+  damageTaken     Int      @default(0)
+  abilitiesUsed   Int      @default(0)
+  
+  // Result
+  placement       Int?
+  eliminatedBy    String?
+  eliminatedAt    DateTime?
+  
+  won             Battle?  @relation("BattleWinner")
+  
+  createdAt       DateTime @default(now())
+
+  @@unique([battleId, agentId])
+  @@index([battleId])
+  @@index([userId])
+  @@map("battle_participants")
+}
+
+// Battle Log - Individual actions
+model BattleLog {
+  id              String   @id @default(uuid())
+  battleId        String
+  battle          Battle   @relation(fields: [battleId], references: [id], onDelete: Cascade)
+  
+  round           Int
+  timestamp       DateTime @default(now())
+  
+  // Action Data
+  attackerId      String
+  defenderId      String
+  action          String   // attack, defend, special, dodge, counter
+  ability         String
+  damage          Int
+  effect          String   // fire, ice, lightning, void, plasma, etc.
+  
+  // State after action
+  attackerHealth  Int
+  defenderHealth  Int
+  
+  // AI Commentary
+  commentary      String?
+  
+  // Animation data for frontend
+  animationData   Json?
+
+  @@index([battleId])
+  @@map("battle_logs")
+}
+
+// Tournament Model
+model Tournament {
+  id              String   @id @default(uuid())
+  name            String
+  description     String?
+  
+  // Configuration
+  playerCount     Int      // 4, 8, 16, 32
+  prizePool       Int      @default(0)
+  entryFee        Int      @default(0)
+  
+  // Status
+  status          String   @default("waiting") // waiting, registration, in-progress, completed
+  
+  // Participants
+  participants    TournamentParticipant[]
+  matches         TournamentMatch[]
+  
+  // Bracket
+  currentRound    Int      @default(1)
+  totalRounds     Int
+  
+  // Creator
+  creatorId       String
+  creator         User     @relation(fields: [creatorId], references: [id])
+  
+  // Winner
+  championId      String?
+  champion        TournamentParticipant? @relation("TournamentChampion", fields: [championId], references: [id])
+  
+  // Timing
+  registrationEndsAt DateTime?
+  startedAt       DateTime?
+  endedAt         DateTime?
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([status])
+  @@map("tournaments")
+}
+
+// Tournament Participant
+model TournamentParticipant {
+  id              String   @id @default(uuid())
+  tournamentId    String
+  tournament      Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  agentId         String
+  agent           Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  
+  seed            Int      // Bracket position
+  eliminated      Boolean  @default(false)
+  eliminatedRound Int?
+  
+  won             Tournament? @relation("TournamentChampion")
+  
+  createdAt       DateTime @default(now())
+
+  @@unique([tournamentId, userId])
+  @@index([tournamentId])
+  @@map("tournament_participants")
+}
+
+// Tournament Match
+model TournamentMatch {
+  id              String   @id @default(uuid())
+  tournamentId    String
+  tournament      Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  
+  round           Int
+  position        Int      // Position in bracket
+  
+  player1Id       String?
+  player2Id       String?
+  
+  winnerId        String?
+  battleId        String?
+  
+  status          String   @default("pending") // pending, ready, in-progress, completed
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([tournamentId])
+  @@map("tournament_matches")
+}
+
+// Battle Royale Room
+model RoyaleRoom {
+  id              String   @id @default(uuid())
+  name            String
+  code            String   @unique
+  maxPlayers      Int      @default(20)
+  
+  status          String   @default("waiting") // waiting, in-progress, completed
+  
+  participants    RoyaleParticipant[]
+  
+  creatorId       String
+  creator         User     @relation(fields: [creatorId], references: [id])
+  
+  winnerId        String?
+  winner          RoyaleParticipant? @relation("RoyaleWinner", fields: [winnerId], references: [id])
+  
+  startedAt       DateTime?
+  endedAt         DateTime?
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([code])
+  @@index([status])
+  @@map("royale_rooms")
+}
+
+// Royale Participant
+model RoyaleParticipant {
+  id              String   @id @default(uuid())
+  roomId          String
+  room            RoyaleRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  agentId         String
+  agent           Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  
+  status          String   @default("alive") // alive, eliminated
+  placement       Int?
+  
+  eliminatedBy    String?
+  eliminatedAt    DateTime?
+  
+  kills           Int      @default(0)
+  
+  won             RoyaleRoom? @relation("RoyaleWinner")
+  
+  createdAt       DateTime @default(now())
+
+  @@unique([roomId, userId])
+  @@index([roomId])
+  @@map("royale_participants")
+}
+
+// Battle History - For user's battle records
+model BattleHistory {
+  id              String   @id @default(uuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  battleId        String
+  battle          Battle   @relation(fields: [battleId], references: [id], onDelete: Cascade)
+  
+  agentId         String
+  result          String   // win, loss
+  pointsEarned    Int      @default(0)
+  pointsLost      Int      @default(0)
+  
+  createdAt       DateTime @default(now())
+
+  @@index([userId])
+  @@map("battle_history")
+}
+
+// Achievement Model
+model Achievement {
+  id              String   @id @default(uuid())
+  name            String   @unique
+  description     String
+  icon            String
+  category        String   // battle, tournament, royale, special
+  
+  // Requirements
+  requirementType String   // wins, tournaments_won, streak, etc.
+  requirementValue Int
+  
+  // Reward
+  pointsReward    Int      @default(0)
+  
+  users           UserAchievement[]
+  
+  createdAt       DateTime @default(now())
+
+  @@map("achievements")
+}
+
+// User Achievement - Unlocked achievements
+model UserAchievement {
+  id              String   @id @default(uuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  achievementId   String
+  achievement     Achievement @relation(fields: [achievementId], references: [id])
+  
+  unlockedAt      DateTime @default(now())
+
+  @@unique([userId, achievementId])
+  @@map("user_achievements")
+}
+
+// Leaderboard Snapshot (for historical tracking)
+model LeaderboardSnapshot {
+  id              String   @id @default(uuid())
+  userId          String
+  username        String?
+  walletAddress   String
+  
+  rank            Int
+  arenaPoints     Int
+  totalWins       Int
+  totalLosses     Int
+  
+  snapshotDate    DateTime @default(now())
+
+  @@index([snapshotDate])
+  @@map("leaderboard_snapshots")
+}
