@@ -7,6 +7,9 @@ interface BattleActionParams {
   defender: Agent;
   attackerHealth: number;
   defenderHealth: number;
+  // Level only affects the AI opponent's edge in close calls — it
+  // doesn't change the player's own stats or rolls.
+  defenderLevel?: number;
 }
 
 interface BattleActionResult {
@@ -14,11 +17,12 @@ interface BattleActionResult {
   ability: string;
   damage: number;
   effect: string;
+  effectTag: 'critical' | 'blocked' | 'dodged' | 'saved' | 'normal';
   attackerHealth: number;
   defenderHealth: number;
 }
 
-const ABILITIES = {
+const ABILITIES: Record<Agent['class'], string[]> = {
   Warrior: ['Power Strike', 'Shield Bash', 'Battle Cry', 'Execute'],
   Striker: ['Quick Jab', 'Combo Attack', 'Precision Hit', 'Finishing Blow'],
   Defender: ['Iron Wall', 'Counter Stance', 'Fortify', 'Retaliate'],
@@ -29,12 +33,36 @@ const ABILITIES = {
 
 const EFFECTS = ['fire', 'ice', 'lightning', 'void', 'plasma', 'shadow', 'light', 'nature'];
 
+// Level 1 is an easy warm-up fight; level 7 is a genuine, rare-to-win
+// challenge. Each level raises the AI opponent's base stats and gives
+// it a small combat edge (better dodge/crit) on top of that.
+const LEVEL_STAT_RANGE: Record<number, { min: number; max: number }> = {
+  1: { min: 35, max: 50 },
+  2: { min: 45, max: 58 },
+  3: { min: 55, max: 68 },
+  4: { min: 72, max: 85 },
+  5: { min: 82, max: 93 },
+  6: { min: 90, max: 98 },
+  7: { min: 95, max: 99 },
+};
+
+const LEVEL_COMBAT_EDGE: Record<number, number> = {
+  1: 0,
+  2: 0.02,
+  3: 0.05,
+  4: 0.1,
+  5: 0.14,
+  6: 0.18,
+  7: 0.22,
+};
+
 export class BattleEngine {
   private battleInterval: Map<string, NodeJS.Timeout> = new Map();
 
-  async createSinglePlayerBattle(playerAgent: Agent, owner: string): Promise<Battle> {
-    const enemyAgent = this.generateEnemyAgent(playerAgent);
-    
+  async createSinglePlayerBattle(playerAgent: Agent, owner: string, level: number = 1): Promise<Battle> {
+    const safeLevel = Math.max(1, Math.min(7, Math.round(level)));
+    const enemyAgent = this.generateEnemyAgent(safeLevel);
+
     const battle: Battle = {
       id: '',
       type: 'single',
@@ -50,6 +78,9 @@ export class BattleEngine {
     };
 
     const createdBattle = db.createBattle(battle);
+    // Stash the level on the battle record so the response can echo it
+    // back to the frontend without a separate lookup.
+    (createdBattle as Battle & { level?: number }).level = safeLevel;
     return createdBattle;
   }
 
@@ -84,11 +115,18 @@ export class BattleEngine {
     const attackerPlayer = isPlayer1Turn ? player1 : player2;
     const defenderPlayer = isPlayer1Turn ? player2 : player1;
 
+    // The AI opponent (owner 'AI') gets its level-based combat edge
+    // applied when it's defending, on top of its already-scaled stats.
+    const defenderLevel = defender.owner === 'AI'
+      ? (battle as Battle & { level?: number }).level
+      : undefined;
+
     const result = this.calculateBattleAction({
       attacker,
       defender,
       attackerHealth: attackerPlayer.health,
       defenderHealth: defenderPlayer.health,
+      defenderLevel,
     });
 
     const log: BattleLog = {
@@ -99,6 +137,7 @@ export class BattleEngine {
       ability: result.ability,
       damage: result.damage,
       effect: result.effect,
+      effectTag: result.effectTag,
       attackerHealth: result.attackerHealth,
       defenderHealth: result.defenderHealth,
       timestamp: Date.now(),
@@ -114,8 +153,6 @@ export class BattleEngine {
 
     db.updateBattle(battleId, { logs: battle.logs, players: battle.players });
 
-    // End the battle the moment a player's health hits 0, rather than
-    // waiting until the next round is requested.
     if (battle.players[0].health <= 0 || battle.players[1].health <= 0) {
       await this.endBattle(battleId);
     }
@@ -130,8 +167,6 @@ export class BattleEngine {
     const player1 = battle.players[0];
     const player2 = battle.players[1];
 
-    // Whoever still has health above 0 wins. If both somehow hit 0
-    // simultaneously, treat it as a draw rather than always favoring player2.
     let winner: string | null;
     if (player1.health > 0 && player2.health <= 0) {
       winner = player1.agentId;
@@ -149,19 +184,14 @@ export class BattleEngine {
 
     if (updatedBattle) {
       await this.updateAgentStats(battle);
-      try {
-        await storageService.uploadBattle(updatedBattle);
-      } catch (error) {
-        // Don't let a 0G Storage outage or missing config break battle completion.
-        console.error('Failed to persist battle to 0G Storage:', error);
-      }
+      storageService.uploadBattle(updatedBattle).catch((err) => console.error('0G Storage upload failed:', err));
     }
 
-    return updatedBattle;
+    return updatedBattle ?? null;
   }
 
   private calculateBattleAction(params: BattleActionParams): BattleActionResult {
-    const { attacker, defender, attackerHealth, defenderHealth } = params;
+    const { attacker, defender, attackerHealth, defenderHealth, defenderLevel } = params;
 
     const actions: BattleAction[] = ['attack', 'defend', 'special', 'dodge', 'counter'];
     const action = actions[Math.floor(Math.random() * actions.length)];
@@ -171,61 +201,95 @@ export class BattleEngine {
 
     const effect = EFFECTS[Math.floor(Math.random() * EFFECTS.length)];
 
-    const baseDamage = Math.floor(Math.random() * 15) + 10;
+    const levelEdge = defenderLevel ? (LEVEL_COMBAT_EDGE[defenderLevel] || 0) : 0;
 
+    const dodgeChance = 0.25 + (defender.stats.speed - 50) / 150 + levelEdge;
+    if (Math.random() < Math.max(0.1, Math.min(0.5, dodgeChance))) {
+      return {
+        action,
+        ability,
+        damage: 0,
+        effect,
+        effectTag: 'dodged',
+        attackerHealth,
+        defenderHealth,
+      };
+    }
+
+    const baseDamage = Math.floor(Math.random() * 15) + 10;
     const strengthBonus = (attacker.stats.strength - 50) / 10;
     const defenseBonus = (defender.stats.defense - 50) / 10;
 
     let damage = Math.round(Math.max(5, baseDamage + strengthBonus - defenseBonus));
+    let effectTag: BattleActionResult['effectTag'] = 'normal';
+
+    const critChance = 0.22 + (attacker.stats.intelligence - 50) / 200;
+    const isCritical = Math.random() < Math.max(0.1, Math.min(0.4, critChance));
 
     if (action === 'special') {
       damage = Math.round(damage * 1.5);
     } else if (action === 'defend') {
-      damage = Math.round(damage * 0.5);
-    } else if (action === 'dodge') {
-      if (Math.random() > 0.5) {
-        damage = 0;
-      }
+      damage = Math.round(damage * 0.4);
+      effectTag = 'blocked';
     }
 
-    const newDefenderHealth = Math.max(0, defenderHealth - damage);
+    if (isCritical && effectTag === 'normal') {
+      damage = Math.round(damage * 1.8);
+      effectTag = 'critical';
+    }
+
+    let newDefenderHealth = Math.max(0, defenderHealth - damage);
+
+    if (newDefenderHealth === 0 && defenderHealth > damage * 0.3) {
+      newDefenderHealth = 1;
+      effectTag = 'saved';
+    }
 
     return {
       action,
       ability,
       damage,
       effect,
+      effectTag,
       attackerHealth,
       defenderHealth: newDefenderHealth,
     };
   }
 
-  private generateEnemyAgent(playerAgent: Agent): Agent {
+  private generateEnemyAgent(level: number): Agent {
     const classes = ['Warrior', 'Striker', 'Defender', 'Assassin', 'Mage', 'Tank'] as const;
-    const names = ['NEXUS PRIME', 'VOID HUNTER', 'QUANTUM SHADOW', 'NEON STRIKER', 'CYBER TITAN', 'DARK MATTER', 'STORM BREAKER', 'PLASMA WRAITH'];
-
-    const enemyClass = classes[Math.floor(Math.random() * classes.length)];
-    const enemyName = names[Math.floor(Math.random() * names.length)];
-
-    const baseStats = {
-      strength: Math.floor(Math.random() * 20) + 75,
-      defense: Math.floor(Math.random() * 20) + 75,
-      speed: Math.floor(Math.random() * 20) + 75,
-      intelligence: Math.floor(Math.random() * 20) + 75,
+    const namesByLevel: Record<number, string[]> = {
+      1: ['RUSTY DRONE', 'SCRAP BOT', 'TRAINING DUMMY'],
+      2: ['IRON CADET', 'NEON ROOKIE'],
+      3: ['STORM BREAKER', 'PLASMA WRAITH'],
+      4: ['VOID HUNTER', 'NEON STRIKER'],
+      5: ['CYBER TITAN', 'DARK MATTER'],
+      6: ['QUANTUM SHADOW', 'NEXUS PRIME'],
+      7: ['OMEGA SOVEREIGN', 'THE UNBROKEN'],
     };
 
-    const levelAdjustment = Math.min(playerAgent.wins * 2, 20);
-    baseStats.strength = Math.min(99, baseStats.strength + levelAdjustment);
-    baseStats.defense = Math.min(99, baseStats.defense + levelAdjustment);
+    const enemyClass = classes[Math.floor(Math.random() * classes.length)];
+    const names = namesByLevel[level] || namesByLevel[1];
+    const enemyName = names[Math.floor(Math.random() * names.length)];
+
+    const range = LEVEL_STAT_RANGE[level] || LEVEL_STAT_RANGE[1];
+    const rollStat = () => Math.floor(Math.random() * (range.max - range.min + 1)) + range.min;
+
+    const baseStats = {
+      strength: rollStat(),
+      defense: rollStat(),
+      speed: rollStat(),
+      intelligence: rollStat(),
+    };
 
     const enemy = db.createAgent({
       name: enemyName,
       class: enemyClass,
-      personality: 'Aggressive',
+      personality: level >= 6 ? 'Ruthless' : 'Aggressive',
       combatStyle: 'Tactical',
       stats: baseStats,
-      specialAbility: 'Dark Matter Blast',
-      avatar: '👾',
+      specialAbility: level >= 7 ? 'Omega Annihilation' : 'Dark Matter Blast',
+      avatar: 'tank',
       owner: 'AI',
       wins: 0,
       losses: 0,
@@ -237,7 +301,6 @@ export class BattleEngine {
 
   private async updateAgentStats(battle: Battle): Promise<void> {
     if (!battle.winner) {
-      // Draw — no wins/losses awarded to either side.
       return;
     }
 
@@ -291,7 +354,7 @@ export class BattleEngine {
           return;
         }
 
-        setTimeout(runRound, 1500);
+        runRound();
       };
 
       runRound();

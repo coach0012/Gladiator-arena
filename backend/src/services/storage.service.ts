@@ -1,7 +1,7 @@
 import { ethers } from 'ethers';
-import { Indexer, ZgFile } from '@0glabs/0g-ts-sdk';
+import { Indexer, ZgFile } from '@0gfoundation/0g-storage-ts-sdk';
 import logger from '../lib/logger';
-import config from '../config';
+import { config } from '../config';
 
 interface StorageUploadResult {
   hash: string;

@@ -115,10 +115,10 @@ class ApiService {
   }
 
   // Battles
-  async startBattle(agentId: string) {
+  async startBattle(agentId: string, level: number = 1) {
     return this.request('/battle/start', {
       method: 'POST',
-      body: JSON.stringify({ agentId }),
+      body: JSON.stringify({ agentId, level }),
     });
   }
 

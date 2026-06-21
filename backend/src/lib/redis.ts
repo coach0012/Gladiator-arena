@@ -1,12 +1,10 @@
 import Redis from 'ioredis';
-import config from '../config';
+import { config } from '../config';
 
 const redis = new Redis(config.redis.url, {
   maxRetriesPerRequest: 3,
-  retryDelayOnFailover: 100,
   lazyConnect: true,
 });
-
 redis.on('connect', () => {
   console.log('✅ Redis connected');
 });

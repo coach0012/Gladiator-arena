@@ -6,3 +6,5 @@ dist/
 contracts/lib/
 contracts/out/
 contracts/cache/
+backend/.env.save
+*.backup

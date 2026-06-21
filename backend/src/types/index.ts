@@ -39,7 +39,23 @@ export interface GeneratedAgent {
   weaknesses: string[];
 }
 
-// Battle Types
+export interface Agent {
+  id: string;
+  name: string;
+  class: AgentClass;
+  personality: string;
+  combatStyle: CombatStyle;
+  stats: AgentStats;
+  specialAbility: string;
+  avatar: string;
+  owner: string;
+  wins: number;
+  losses: number;
+  points: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export type BattleType = 'single' | 'tournament' | 'royale';
 export type BattleStatus = 'waiting' | 'in-progress' | 'completed';
 export type BattleAction = 'attack' | 'defend' | 'special' | 'dodge' | 'counter';
@@ -83,7 +99,39 @@ export interface BattleParticipantState {
   status: 'alive' | 'eliminated';
 }
 
-// Tournament Types
+export interface BattlePlayer {
+  agentId: string;
+  owner: string;
+  health: number;
+  maxHealth: number;
+  status: 'alive' | 'eliminated';
+}
+
+export interface BattleLog {
+  round: number;
+  attacker: string;
+  defender: string;
+  action: BattleAction;
+  ability: string;
+  damage: number;
+  effectTag: 'critical' | 'blocked' | 'dodged' | 'saved' | 'normal';
+  effect: string;
+  attackerHealth: number;
+  defenderHealth: number;
+  timestamp: number;
+}
+
+export interface Battle {
+  id: string;
+  type: BattleType;
+  status: BattleStatus;
+  players: BattlePlayer[];
+  logs: BattleLog[];
+  winner: string | null;
+  createdAt: number;
+  endedAt: number | null;
+}
+
 export type TournamentStatus = 'waiting' | 'registration' | 'in-progress' | 'completed';
 
 export interface CreateTournamentDto {
@@ -112,7 +160,17 @@ export interface TournamentMatchData {
   status: 'pending' | 'ready' | 'in-progress' | 'completed';
 }
 
-// Royale Types
+export interface Tournament {
+  id: string;
+  name: string;
+  description?: string;
+  playerCount: 4 | 8 | 16 | 32;
+  status: TournamentStatus;
+  bracket: TournamentBracket;
+  participants: string[];
+  createdAt: number;
+}
+
 export type RoyaleStatus = 'waiting' | 'in-progress' | 'completed';
 
 export interface CreateRoyaleDto {
@@ -141,7 +199,37 @@ export interface RoyaleParticipantState {
   kills: number;
 }
 
-// WebSocket Event Types
+export interface RoyaleRoom {
+  id: string;
+  code: string;
+  name: string;
+  maxPlayers: number;
+  status: RoyaleStatus;
+  participants: RoyaleParticipantState[];
+  winner?: string;
+  createdAt: number;
+}
+
+export interface UserStats {
+  totalBattles: number;
+  wins: number;
+  losses: number;
+  points: number;
+  tournamentsWon: number;
+  royalesWon: number;
+  highestStreak: number;
+  currentStreak: number;
+}
+
+export interface User {
+  address: string;
+  nonce: string;
+  agents: string[];
+  stats: UserStats;
+  createdAt: number;
+  lastLogin: number;
+}
+
 export type WSEventType = 
   | 'battle_event'
   | 'battle_start'
@@ -159,7 +247,6 @@ export interface WSMessage<T = unknown> {
   timestamp: number;
 }
 
-// API Response Types
 export interface ApiResponse<T = unknown> {
   success: boolean;
   data?: T;
@@ -178,7 +265,6 @@ export interface PaginatedResponse<T> {
   };
 }
 
-// Leaderboard Types
 export interface LeaderboardEntry {
   rank: number;
   userId: string;
@@ -193,7 +279,6 @@ export interface LeaderboardEntry {
   streak?: number;
 }
 
-// Achievement Types
 export interface AchievementDto {
   id: string;
   name: string;

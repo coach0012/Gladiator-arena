@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { AuthenticatedRequest, UserPayload } from '../types';
-import config from '../config';
+import { config } from '../config';
 import { db } from '../db/memory';
 import logger from '../lib/logger';
 
@@ -96,7 +96,7 @@ export const requireAdmin = async (
     return;
   }
 
-  const adminAddresses = config.admin.walletAddresses.map(addr => addr.toLowerCase());
+  const adminAddresses = config.admin.walletAddresses.map((addr: string) => addr.toLowerCase());
   
   if (!adminAddresses.includes(req.user.walletAddress.toLowerCase())) {
     res.status(403).json({
